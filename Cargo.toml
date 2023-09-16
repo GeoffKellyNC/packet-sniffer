@@ -7,3 +7,6 @@ edition = "2021"
 
 [dependencies]
 pcap = "0.8.0"
+colored = "2.0"
+ndarray = "0.15"
+ndarray-stats = "0.4"

@@ -1,4 +1,14 @@
+extern crate colored;
+extern crate ndarray;
+extern crate ndarray_stats;
 extern crate pcap;
+
+use colored::*;
+use ndarray::Array1;
+use ndarray_stats::QuantileExt;
+use std::collections::HashMap;
+use std::thread;
+use std::time::Duration;
 
 fn main() {
     let device = pcap::Device::lookup().expect("Failed to lookup device");
@@ -11,55 +21,45 @@ fn main() {
         .unwrap();
 
     let mut packet_count = 0;
+    let mut good_count = 0;
+    let mut failed_login_count = 0;
+    let mut unusual_traffic_count = 0;
+    let mut unusual_time_count = 0;
+    let mut risky_ip_count = 0;
+    let mut unusual_port_count = 0;
+
+    let mut failed_login_ips: HashMap<String, i32> = HashMap::new();
+    let mut bytes: Vec<f64> = Vec::new();
 
     loop {
+        // Slow down the output
+        thread::sleep(Duration::from_millis(500));
+
         match cap.next() {
             Ok(packet) => {
                 packet_count += 1;
-                println!("========== Packet #{} ==========", packet_count);
+                let packet_len = packet.data.len() as f64;
+                bytes.push(packet_len);
 
-                println!("Raw Packet: {:?}", packet);
-
-                let packet_len = packet.data.len();
-
-                if packet_len < 54 {
+                if packet_len < 54.0 {
                     // Minimum length to read Ethernet, IP, and TCP headers
                     println!("Packet too small to process: {} bytes", packet_len);
                     continue;
                 }
 
-                // Ethernet header is usually 14 bytes
+                let mut is_suspicious = false;
+                let mut reason = String::new();
+
+                // Your existing code for extracting headers and ports
                 let ethernet_header = &packet.data[0..14];
-
-                // Source MAC address is 6 bytes starting at byte 6
                 let src_mac = &ethernet_header[6..12];
-                println!("Source MAC: {:?}", src_mac);
-
-                // Destination MAC address is the first 6 bytes
                 let dest_mac = &ethernet_header[0..6];
-                println!("Destination MAC: {:?}", dest_mac);
-
-                // IP header starts after Ethernet header
-                let ip_header = &packet.data[14..34]; // Assuming no VLAN tags, etc.
-
-                // Source IP is 4 bytes starting at byte 12
+                let ip_header = &packet.data[14..34];
                 let src_ip = &ip_header[12..16];
-                println!("Source IP: {:?}", src_ip);
-
-                // Destination IP is 4 bytes starting at byte 16
                 let dest_ip = &ip_header[16..20];
-                println!("Destination IP: {:?}", dest_ip);
-
-                // Assuming Ethernet header is 14 bytes
                 let ethernet_header_end = 14;
-
-                // Assuming IP header is 20 bytes (can vary)
                 let ip_header_end = ethernet_header_end + 20;
-
-                // Assuming TCP header is 20 bytes (can vary)
                 let tcp_header_end = ip_header_end + 20;
-
-                // Extract TCP source and destination ports
                 let tcp_src_port = u16::from_be_bytes([
                     packet.data[ip_header_end],
                     packet.data[ip_header_end + 1],
@@ -68,37 +68,98 @@ fn main() {
                     packet.data[ip_header_end + 2],
                     packet.data[ip_header_end + 3],
                 ]);
-
-                println!("Source Port: {}", tcp_src_port);
-                println!("Destination Port: {}", tcp_dest_port);
-
-                match tcp_dest_port {
-                    80 => println!("Likely HTTP data"),
-                    443 => println!("Likely HTTPS data"),
-                    21 => println!("Likely FTP data"),
-                    22 => println!("Likely SSH data"),
-                    _ => println!("Unknown data type"),
-                }
-
-                // Extract application data
                 let app_data = &packet.data[tcp_header_end..];
+                let text = std::str::from_utf8(app_data).unwrap_or("");
 
-                // Try to interpret as a UTF-8 string
-                if let Ok(text) = std::str::from_utf8(app_data) {
-                    // Check if it looks like HTTP data
-                    if text.starts_with("GET")
-                        || text.starts_with("POST")
-                        || text.starts_with("HTTP")
-                    {
-                        println!("HTTP data: {}", text);
-                    } else {
-                        println!("Non-HTTP data: {:?}", app_data);
-                    }
-                } else {
-                    println!("Non-textual data: {:?}", app_data);
+                // 1. Unusual Traffic Patterns
+                let bytes_array = Array1::from(bytes.clone());
+                let mean = bytes_array.mean().unwrap();
+                let std_dev = bytes_array.std(0.0);
+                let threshold = mean + 2.0 * std_dev;
+                if packet_len > threshold {
+                    is_suspicious = true;
+                    reason = "Unusual Traffic Patterns".to_string();
+                    println!("========== {} #{} ==========", reason.blue(), packet_count);
                 }
 
-                println!("=================================\n");
+                // 2. Multiple Failed Logins
+                if text.contains("Failed Login") {
+                    let src_ip_str = format!("{:?}", src_ip);
+                    let counter = failed_login_ips.entry(src_ip_str).or_insert(0);
+                    *counter += 1;
+                    if *counter > 5 {
+                        is_suspicious = true;
+                        reason = "Multiple Failed Logins".to_string();
+                        println!(
+                            "========== {} #{} ==========",
+                            reason.yellow(),
+                            packet_count
+                        );
+                    }
+                }
+
+                // 3. Unusual Times of Activity
+                let current_hour: i32 = 3; // Placeholder
+                if current_hour < 6 || current_hour > 22 {
+                    is_suspicious = true;
+                    reason = "Unusual Times of Activity".to_string();
+                    println!(
+                        "========== {} #{} ==========",
+                        reason.magenta(),
+                        packet_count
+                    );
+                }
+
+                // 4. Connections to Risky IPs
+                let risky_ips: [&str; 2] = ["192.168.1.2", "192.168.1.3"]; // Placeholder
+                let dest_ip_str = format!("{:?}", dest_ip);
+                if risky_ips.contains(&dest_ip_str.as_str()) {
+                    is_suspicious = true;
+                    reason = "Connections to Risky IPs".to_string();
+                    println!("========== {} #{} ==========", reason.red(), packet_count);
+                }
+
+                // 5. Unusual Protocols or Ports
+                if tcp_dest_port > 1024 {
+                    is_suspicious = true;
+                    reason = "Unusual Protocols or Ports".to_string();
+                    println!("========== {} #{} ==========", reason.green(), packet_count);
+                }
+
+                if is_suspicious {
+                    match reason.as_str() {
+                        "Unusual Traffic Patterns" => unusual_traffic_count += 1,
+                        "Multiple Failed Logins" => failed_login_count += 1,
+                        "Unusual Times of Activity" => unusual_time_count += 1,
+                        "Connections to Risky IPs" => risky_ip_count += 1,
+                        "Unusual Protocols or Ports" => unusual_port_count += 1,
+                        _ => {}
+                    }
+
+                    println!("Source MAC: {:?}", src_mac);
+                    println!("Destination MAC: {:?}", dest_mac);
+                    println!("Source IP: {:?}", src_ip);
+                    println!("Destination IP: {:?}", dest_ip);
+                    println!("Source Port: {}", tcp_src_port);
+                    println!("Destination Port: {}", tcp_dest_port);
+                    println!("=================================\n");
+                } else {
+                    good_count += 1;
+                }
+
+                println!("Total Packets: {}", packet_count);
+                println!("Good Packets: {}", good_count.to_string().green());
+                println!(
+                    "Unusual Traffic: {}",
+                    unusual_traffic_count.to_string().blue()
+                );
+                println!("Failed Logins: {}", failed_login_count.to_string().yellow());
+                println!(
+                    "Unusual Times: {}",
+                    unusual_time_count.to_string().magenta()
+                );
+                println!("Risky IPs: {}", risky_ip_count.to_string().red());
+                println!("Unusual Ports: {}", unusual_port_count.to_string().green());
             }
             Err(pcap::Error::TimeoutExpired) => continue,
             Err(e) => {
