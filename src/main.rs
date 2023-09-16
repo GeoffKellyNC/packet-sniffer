@@ -7,6 +7,9 @@ use colored::*;
 use ndarray::Array1;
 use ndarray_stats::QuantileExt;
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::{self, BufRead};
+use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
@@ -80,6 +83,15 @@ fn main() {
                     is_suspicious = true;
                     reason = "Unusual Traffic Patterns".to_string();
                     println!("========== {} #{} ==========", reason.blue(), packet_count);
+                    println!("Details:");
+                    println!("  - Mean Packet Size: {:.2}", mean);
+                    println!("  - Standard Deviation: {:.2}", std_dev);
+                    println!("  - Threshold: {:.2}", threshold);
+                    println!("  - Current Packet Size: {:.2}", packet_len);
+                    println!(
+                        "  - Packet exceeds the threshold by {:.2}",
+                        packet_len - threshold
+                    );
                 }
 
                 // 2. Multiple Failed Logins
@@ -111,9 +123,20 @@ fn main() {
                 }
 
                 // 4. Connections to Risky IPs
-                let risky_ips: [&str; 2] = ["192.168.1.2", "192.168.1.3"]; // Placeholder
+
+                // Getting Risky IP's from Text File
+                let mut risky_ips: Vec<String> = Vec::new(); // Placeholder
+                let path = Path::new("risky_ips.txt");
+                let file = File::open(path).expect("Failed to Open File");
+                let reader = io::BufReader::new(file);
+
+                for line in reader.lines() {
+                    let ip = line.expect("Could Not read Line");
+                    risky_ips.push(ip)
+                }
+
                 let dest_ip_str = format!("{:?}", dest_ip);
-                if risky_ips.contains(&dest_ip_str.as_str()) {
+                if risky_ips.contains(&dest_ip_str) {
                     is_suspicious = true;
                     reason = "Connections to Risky IPs".to_string();
                     println!("========== {} #{} ==========", reason.red(), packet_count);
