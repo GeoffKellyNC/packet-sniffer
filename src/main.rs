@@ -3,6 +3,7 @@ extern crate ndarray;
 extern crate ndarray_stats;
 extern crate pcap;
 
+use chrono::prelude::*;
 use colored::*;
 use ndarray::Array1;
 use ndarray_stats::QuantileExt;
@@ -53,7 +54,6 @@ fn main() {
                 let mut is_suspicious = false;
                 let mut reason = String::new();
 
-                // Your existing code for extracting headers and ports
                 let ethernet_header = &packet.data[0..14];
                 let src_mac = &ethernet_header[6..12];
                 let dest_mac = &ethernet_header[0..6];
@@ -111,8 +111,10 @@ fn main() {
                 }
 
                 // 3. Unusual Times of Activity
-                let current_hour: i32 = 3; // Placeholder
-                if current_hour < 6 || current_hour > 22 {
+                let local_time = Local::now();
+                let current_hour = local_time.hour() as i32;
+
+                if (0..=6).contains(&current_hour) {
                     is_suspicious = true;
                     reason = "Unusual Times of Activity".to_string();
                     println!(
@@ -120,14 +122,15 @@ fn main() {
                         reason.magenta(),
                         packet_count
                     );
+                    println!("Current Hour: {}", current_hour);
                 }
 
                 // 4. Connections to Risky IPs
 
                 // Getting Risky IP's from Text File
                 let mut risky_ips: Vec<String> = Vec::new(); // Placeholder
-                let path = Path::new("risky_ips.txt");
-                let file = File::open(path).expect("Failed to Open File");
+                let path = Path::new("src/risky_ips.txt");
+                let file = File::open(path).expect("Failed to Open Risky IP File");
                 let reader = io::BufReader::new(file);
 
                 for line in reader.lines() {
@@ -165,6 +168,7 @@ fn main() {
                     println!("Destination IP: {:?}", dest_ip);
                     println!("Source Port: {}", tcp_src_port);
                     println!("Destination Port: {}", tcp_dest_port);
+                    println!("Packet Data: {:?}", packet.data);
                     println!("=================================\n");
                 } else {
                     good_count += 1;
